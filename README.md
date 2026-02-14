@@ -51,7 +51,6 @@ node p2018.js
 
 - `vw_muestreo_mediciones_estandar`: vista normalizada muestreo x medición.
 - `vw_muestreos_parametros_wide`: vista pivoteada (1 fila por muestreo, parámetros como columnas).
-- `vw_excel_2001_comparacion`: vista de comparación similar al formato original Excel 2001.
 
 ## Contexto académico
 
