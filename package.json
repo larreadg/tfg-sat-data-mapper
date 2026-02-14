@@ -1,0 +1,27 @@
+{
+  "name": "tfg-sat-data-mapper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/larreadg/tfg-sat-data-mapper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/larreadg/tfg-sat-data-mapper/issues"
+  },
+  "homepage": "https://github.com/larreadg/tfg-sat-data-mapper#readme",
+  "dependencies": {
+    "dayjs": "^1.11.19",
+    "dotenv": "^17.3.1",
+    "pg": "^8.18.0",
+    "xlsx": "^0.18.5"
+  }
+}
