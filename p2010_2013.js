@@ -15,8 +15,17 @@ import {
 } from "./db/index.js";
 
 const FUENTE = "GA_calidad_2010_2013";
+const CONTAMINACION_COLS = ["CONTAMINACION", "Contaminacion", "Contaminación"];
 
-const META_COLS = new Set(["Nro", "ANHO", "Localidad", "X", "Y", "Fecha_mues"]);
+const META_COLS = new Set([
+  "Nro",
+  "ANHO",
+  "Localidad",
+  "X",
+  "Y",
+  "Fecha_mues",
+  ...CONTAMINACION_COLS,
+]);
 
 function toNum(v) {
   if (v === null || v === undefined || v === "") return null;
@@ -71,6 +80,28 @@ function parseCellValue(v) {
   if (Number.isFinite(n)) return { valor: n, valor_texto: null };
 
   return { valor: null, valor_texto: s };
+}
+
+function pickFirstValue(row, keys) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(row, key)) return row[key];
+  }
+  return null;
+}
+
+function parseContaminacion(v) {
+  if (v === null || v === undefined) return null;
+
+  const normalized = String(v)
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!normalized) return null;
+  if (normalized === "SI") return true;
+  if (normalized === "NO") return false;
+  return null;
 }
 
 function resolveFile() {
@@ -132,6 +163,27 @@ export async function run() {
           },
           client
         );
+
+        const contaminacionObservada = parseContaminacion(
+          pickFirstValue(r, CONTAMINACION_COLS)
+        );
+        if (contaminacionObservada !== null) {
+          await client.query(
+            `
+            INSERT INTO evaluaciones_contaminacion (
+              muestreo_id,
+              contaminacion_observada,
+              version_reglas
+            )
+            VALUES ($1, $2, $3)
+            ON CONFLICT (muestreo_id) DO UPDATE
+            SET
+              contaminacion_observada = EXCLUDED.contaminacion_observada,
+              version_reglas = EXCLUDED.version_reglas
+            `,
+            [muestreo.muestreo_id, contaminacionObservada, "excel_2010_2013_contaminacion_si_no_v1"]
+          );
+        }
 
         for (const [col, val] of Object.entries(r)) {
           if (META_COLS.has(col)) continue;

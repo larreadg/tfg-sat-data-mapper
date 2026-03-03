@@ -98,6 +98,7 @@ CREATE TABLE evaluaciones_contaminacion (
     puntaje_contaminacion    integer,
     nivel_contaminacion      text CHECK (nivel_contaminacion IN ('Bajo','Medio','Alto')),
     version_reglas           text,
+    contaminacion_observada  boolean,
 
     -- salida red neuronal
     prob_contaminacion       double precision CHECK (
@@ -116,6 +117,9 @@ CREATE TABLE evaluaciones_contaminacion (
 
 CREATE INDEX idx_eval_nivel ON evaluaciones_contaminacion(nivel_contaminacion);
 CREATE INDEX idx_eval_alerta ON evaluaciones_contaminacion(alerta);
+
+ALTER TABLE evaluaciones_contaminacion
+ADD COLUMN IF NOT EXISTS contaminacion_observada boolean;
 
 
 -- ============================================================
@@ -150,6 +154,7 @@ VALUES
 -- MICROBIOLOGICO
 ('coliformes_fecales', 'Coliformes Fecales', 'UFC/100 mL', 'microbiologico', 'Indicador microbiológico de contaminación fecal'),
 ('coliformes_totales', 'Coliformes Totales', 'UFC/100 mL', 'microbiologico', 'Indicador microbiológico general'),
+('giardia_lamblia', 'Giardia lamblia', 'quistes/20 L', 'microbiologico', 'Protozoo indicador de contaminacion biologica'),
 
 -- NUTRIENTES
 ('nitratos', 'Nitratos (NO3-)', 'mg/L', 'nutrientes', 'Forma oxidada de nitrógeno'),
@@ -162,6 +167,7 @@ VALUES
 ('conductividad', 'Conductividad Eléctrica', 'uS/cm', 'fisicoquimico', 'Indicador de sales disueltas'),
 ('temperatura', 'Temperatura', '°C', 'fisicoquimico', 'Temperatura del agua'),
 ('turbidez', 'Turbidez', 'NTU', 'fisicoquimico', 'Nivel de partículas suspendidas'),
+('color_verdadero', 'Color Verdadero', 'UC', 'fisicoquimico', 'Color aparente real del agua'),
 ('cloro_residual', 'Cloro Residual', 'mg/L', 'fisicoquimico', 'Cloro libre residual'),
 ('solidos_totales', 'Sólidos Totales', 'mg/L', 'fisicoquimico', 'Sólidos disueltos totales'),
 
@@ -190,6 +196,10 @@ VALUES
 ('mercurio', 'Mercurio', 'mg/L', 'metales_pesados', 'Metal pesado tóxico'),
 ('manganeso', 'Manganeso', 'mg/L', 'metales_pesados', 'Metal traza'),
 ('cobre', 'Cobre', 'mg/L', 'metales_pesados', 'Metal traza'),
+('bario', 'Bario', 'mg/L', 'metales_pesados', 'Metal/metaloide traza'),
+('plomo', 'Plomo', 'mg/L', 'metales_pesados', 'Metal pesado toxico'),
+('aluminio', 'Aluminio', 'mg/L', 'metales_pesados', 'Metal traza'),
+('selenio', 'Selenio', 'mg/L', 'metales_pesados', 'Metaloide traza'),
 ('cromo_total', 'Cromo Total', 'mg/L', 'metales_pesados', 'Metal pesado')
 ON CONFLICT (param_code) DO NOTHING;
 
@@ -422,6 +432,60 @@ SET
     nota_umbral_internacional = 'Valor recomendado 0'
 WHERE param_code = 'coliformes_totales';
 
+-- ============================================================
+-- COMPLEMENTO: PARAMETROS FALTANTES DESDE
+-- "TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL"
+-- (fuente provista por profesional medico)
+-- ============================================================
+
+-- Color verdadero: 15 UC
+UPDATE param_catalog
+SET
+    umbral_local_max = 15,
+    fuente_umbral_local = 'TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL, p.1',
+    nota_umbral_local = 'Especificaciones sanitarias fisicas'
+WHERE param_code = 'color_verdadero';
+
+-- Bario: 1.3 mg/L
+UPDATE param_catalog
+SET
+    umbral_local_max = 1.3,
+    fuente_umbral_local = 'TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL, p.1',
+    nota_umbral_local = 'Especificaciones sanitarias de metales y metaloides'
+WHERE param_code = 'bario';
+
+-- Plomo: 0.01 mg/L
+UPDATE param_catalog
+SET
+    umbral_local_max = 0.01,
+    fuente_umbral_local = 'TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL, p.1',
+    nota_umbral_local = 'Especificaciones sanitarias de metales y metaloides'
+WHERE param_code = 'plomo';
+
+-- Aluminio: 0.20 mg/L
+UPDATE param_catalog
+SET
+    umbral_local_max = 0.20,
+    fuente_umbral_local = 'TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL, p.1',
+    nota_umbral_local = 'Especificaciones sanitarias de metales y metaloides'
+WHERE param_code = 'aluminio';
+
+-- Selenio: 0.04 mg/L
+UPDATE param_catalog
+SET
+    umbral_local_max = 0.04,
+    fuente_umbral_local = 'TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL, p.1',
+    nota_umbral_local = 'Especificaciones sanitarias de metales y metaloides'
+WHERE param_code = 'selenio';
+
+-- Giardia lamblia: ausencia (se representa como maximo 0 quistes/20 L)
+UPDATE param_catalog
+SET
+    umbral_local_max = 0,
+    fuente_umbral_local = 'TABLAS DE PARAMETROS DE MEDICION DE CONTAMINACION FLUVIAL, p.1',
+    nota_umbral_local = 'Especificaciones sanitarias microbiologicas: ausencia (quistes/20 L)'
+WHERE param_code = 'giardia_lamblia';
+
 
 -- ============================================================
 -- REVISION INTERNACIONAL (investigacion complementaria)
@@ -613,26 +677,208 @@ WHERE
     (umbral_local_min IS NULL OR umbral_local_max IS NULL)
     AND (umbral_internacional_min IS NOT NULL OR umbral_internacional_max IS NOT NULL);
 
--- Parametros sin valor numerico internacional consolidado:
--- se deja constancia de fuente/conclusion y se mantienen umbrales en NULL.
+-- ============================================================
+-- COMPLETITUD DE UMBRALES MAX (todos los parametros con valor)
+-- Metodologia:
+-- 1) Si falta umbral internacional y existe local, se adopta local como proxy.
+-- 2) Para parametros relacionados, se derivan valores por estequiometria.
+-- 3) Para parametros sin norma directa (MO y temperatura), se usa P95 historico.
+-- ============================================================
+
+-- 1) Proxy internacional desde umbral local cuando no existe consenso internacional.
 UPDATE param_catalog
 SET
+    umbral_internacional_max = umbral_local_max,
     fuente_umbral_internacional = COALESCE(
         fuente_umbral_internacional,
-        'Directive (EU) 2020/2184 Annex I + US EPA NPDWR/NSDWR'
+        'Proxy internacional adoptado desde umbral local por ausencia de consenso unico'
     ),
     nota_umbral_internacional = COALESCE(
         nota_umbral_internacional,
-        'Sin valor paramétrico numérico internacional único/reconocido'
+        'Valor internacional adoptado igual al umbral local para garantizar comparabilidad'
     )
-WHERE param_code IN (
-    'alcalinidad_fenolftaleina',
-    'bicarbonato',
-    'carbonato',
-    'materia_organica',
-    'nitrogeno_total',
-    'temperatura'
-);
+WHERE umbral_local_max IS NOT NULL
+  AND umbral_internacional_max IS NULL;
+
+-- 2.a) Alcalinidad fenolftaleina: se adopta el mismo techo de alcalinidad total (misma magnitud CaCO3).
+UPDATE param_catalog p
+SET
+    umbral_local_max = COALESCE(p.umbral_local_max, t.umbral_local_max),
+    umbral_internacional_max = COALESCE(p.umbral_internacional_max, t.umbral_internacional_max),
+    fuente_umbral_local = COALESCE(
+        p.fuente_umbral_local,
+        'Derivado de alcalinidad_total (misma unidad como CaCO3)'
+    ),
+    nota_umbral_local = COALESCE(
+        p.nota_umbral_local,
+        'Se adopta el limite de alcalinidad total por falta de criterio especifico'
+    ),
+    fuente_umbral_internacional = COALESCE(
+        p.fuente_umbral_internacional,
+        'Derivado de alcalinidad_total (misma unidad como CaCO3)'
+    ),
+    nota_umbral_internacional = COALESCE(
+        p.nota_umbral_internacional,
+        'Se adopta el limite de alcalinidad total por falta de criterio especifico'
+    )
+FROM param_catalog t
+WHERE p.param_code = 'alcalinidad_fenolftaleina'
+  AND t.param_code = 'alcalinidad_total';
+
+-- 2.b) Bicarbonato desde alcalinidad como CaCO3: HCO3- = alcalinidad * (61/50).
+UPDATE param_catalog p
+SET
+    umbral_local_max = COALESCE(p.umbral_local_max, ROUND((t.umbral_local_max * 61.0 / 50.0)::numeric, 2)),
+    umbral_internacional_max = COALESCE(p.umbral_internacional_max, ROUND((t.umbral_internacional_max * 61.0 / 50.0)::numeric, 2)),
+    fuente_umbral_local = COALESCE(
+        p.fuente_umbral_local,
+        'Derivado estequiometricamente desde alcalinidad_total (factor 61/50)'
+    ),
+    nota_umbral_local = COALESCE(
+        p.nota_umbral_local,
+        'Conversion de CaCO3 a HCO3- por peso equivalente'
+    ),
+    fuente_umbral_internacional = COALESCE(
+        p.fuente_umbral_internacional,
+        'Derivado estequiometricamente desde alcalinidad_total (factor 61/50)'
+    ),
+    nota_umbral_internacional = COALESCE(
+        p.nota_umbral_internacional,
+        'Conversion de CaCO3 a HCO3- por peso equivalente'
+    )
+FROM param_catalog t
+WHERE p.param_code = 'bicarbonato'
+  AND t.param_code = 'alcalinidad_total';
+
+-- 2.c) Carbonato desde alcalinidad como CaCO3: CO3-2 = alcalinidad * (30/50).
+UPDATE param_catalog p
+SET
+    umbral_local_max = COALESCE(p.umbral_local_max, ROUND((t.umbral_local_max * 30.0 / 50.0)::numeric, 2)),
+    umbral_internacional_max = COALESCE(p.umbral_internacional_max, ROUND((t.umbral_internacional_max * 30.0 / 50.0)::numeric, 2)),
+    fuente_umbral_local = COALESCE(
+        p.fuente_umbral_local,
+        'Derivado estequiometricamente desde alcalinidad_total (factor 30/50)'
+    ),
+    nota_umbral_local = COALESCE(
+        p.nota_umbral_local,
+        'Conversion de CaCO3 a CO3-2 por peso equivalente'
+    ),
+    fuente_umbral_internacional = COALESCE(
+        p.fuente_umbral_internacional,
+        'Derivado estequiometricamente desde alcalinidad_total (factor 30/50)'
+    ),
+    nota_umbral_internacional = COALESCE(
+        p.nota_umbral_internacional,
+        'Conversion de CaCO3 a CO3-2 por peso equivalente'
+    )
+FROM param_catalog t
+WHERE p.param_code = 'carbonato'
+  AND t.param_code = 'alcalinidad_total';
+
+-- 2.d) Nitrogeno total desde especies inorganicas, convertido a N elemental.
+-- N_total = N(NO3-) + N(NO2-) + N(NH4+)
+WITH n_refs AS (
+    SELECT
+        max(CASE WHEN param_code = 'nitratos' THEN umbral_local_max END) AS no3_l,
+        max(CASE WHEN param_code = 'nitratos' THEN umbral_internacional_max END) AS no3_i,
+        max(CASE WHEN param_code = 'nitritos' THEN umbral_local_max END) AS no2_l,
+        max(CASE WHEN param_code = 'nitritos' THEN umbral_internacional_max END) AS no2_i,
+        max(CASE WHEN param_code = 'amonio' THEN umbral_local_max END) AS nh4_l,
+        max(CASE WHEN param_code = 'amonio' THEN umbral_internacional_max END) AS nh4_i
+    FROM param_catalog
+    WHERE param_code IN ('nitratos', 'nitritos', 'amonio')
+)
+UPDATE param_catalog p
+SET
+    umbral_local_max = COALESCE(
+        p.umbral_local_max,
+        ROUND(((n.no3_l * 14.0 / 62.0) + (n.no2_l * 14.0 / 46.0) + (n.nh4_l * 14.0 / 18.0))::numeric, 2)
+    ),
+    umbral_internacional_max = COALESCE(
+        p.umbral_internacional_max,
+        ROUND(((n.no3_i * 14.0 / 62.0) + (n.no2_i * 14.0 / 46.0) + (n.nh4_i * 14.0 / 18.0))::numeric, 2)
+    ),
+    fuente_umbral_local = COALESCE(
+        p.fuente_umbral_local,
+        'Derivado desde nitratos, nitritos y amonio (conversion a N elemental)'
+    ),
+    nota_umbral_local = COALESCE(
+        p.nota_umbral_local,
+        'Suma estequiometrica: NO3*(14/62) + NO2*(14/46) + NH4*(14/18)'
+    ),
+    fuente_umbral_internacional = COALESCE(
+        p.fuente_umbral_internacional,
+        'Derivado desde nitratos, nitritos y amonio (conversion a N elemental)'
+    ),
+    nota_umbral_internacional = COALESCE(
+        p.nota_umbral_internacional,
+        'Suma estequiometrica: NO3*(14/62) + NO2*(14/46) + NH4*(14/18)'
+    )
+FROM n_refs n
+WHERE p.param_code = 'nitrogeno_total';
+
+-- 3) Materia organica y temperatura: umbral basado en percentil 95 (P95) historico medido.
+WITH p95_stats AS (
+    SELECT
+        md.param_code,
+        ROUND((PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY md.valor))::numeric, 2) AS p95
+    FROM mediciones md
+    WHERE md.valor IS NOT NULL
+      AND md.param_code IN ('materia_organica', 'temperatura')
+    GROUP BY md.param_code
+)
+UPDATE param_catalog p
+SET
+    umbral_local_max = COALESCE(p.umbral_local_max, s.p95),
+    umbral_internacional_max = COALESCE(p.umbral_internacional_max, s.p95),
+    fuente_umbral_local = COALESCE(
+        p.fuente_umbral_local,
+        'Derivado estadisticamente de serie historica propia (P95)'
+    ),
+    nota_umbral_local = COALESCE(
+        p.nota_umbral_local,
+        'P95 de mediciones historicas para parametro sin consenso normativo unico'
+    ),
+    fuente_umbral_internacional = COALESCE(
+        p.fuente_umbral_internacional,
+        'Derivado estadisticamente de serie historica propia (P95)'
+    ),
+    nota_umbral_internacional = COALESCE(
+        p.nota_umbral_internacional,
+        'P95 de mediciones historicas para parametro sin consenso normativo unico'
+    )
+FROM p95_stats s
+WHERE p.param_code = s.param_code;
+
+-- Fallback fijo para ejecuciones sin datos cargados en mediciones.
+UPDATE param_catalog
+SET
+    umbral_local_max = COALESCE(umbral_local_max, CASE param_code
+        WHEN 'materia_organica' THEN 3.24
+        WHEN 'temperatura' THEN 29.04
+    END),
+    umbral_internacional_max = COALESCE(umbral_internacional_max, CASE param_code
+        WHEN 'materia_organica' THEN 3.24
+        WHEN 'temperatura' THEN 29.04
+    END),
+    fuente_umbral_local = COALESCE(
+        fuente_umbral_local,
+        'Fallback P95 historico consolidado SAT (2001-2018)'
+    ),
+    nota_umbral_local = COALESCE(
+        nota_umbral_local,
+        'Se usa P95 consolidado por ausencia de criterio normativo unico'
+    ),
+    fuente_umbral_internacional = COALESCE(
+        fuente_umbral_internacional,
+        'Fallback P95 historico consolidado SAT (2001-2018)'
+    ),
+    nota_umbral_internacional = COALESCE(
+        nota_umbral_internacional,
+        'Se usa P95 consolidado por ausencia de criterio normativo unico'
+    )
+WHERE param_code IN ('materia_organica', 'temperatura');
+
 
 
 -- ============================================================
@@ -678,24 +924,12 @@ LEFT JOIN param_catalog pc ON pc.param_code = md.param_code;
 
 
 -- ============================================================
--- VISTA ESTANDAR: MUESTREO (fila) + PARAMETROS (columnas)
+-- VISTA MODELO NN: solo parametros de agua (entrada) + etiqueta
+-- de salida (contaminacion_observada)
 -- ============================================================
-CREATE OR REPLACE VIEW vw_muestreos_parametros_wide AS
+DROP VIEW IF EXISTS vw_muestreos_parametros_wide;
+CREATE VIEW vw_muestreos_parametros_wide AS
 SELECT
-    m.muestreo_id,
-    m.fuente,
-    m.fecha_muestreo,
-    m.anio,
-    p.pozo_id,
-    p.pozo_code,
-    p.fuente_codigo,
-    p.distrito,
-    p.localidad,
-    p.x,
-    p.y,
-    p.elevacion_m,
-    p.profundidad_m,
-
     max(CASE WHEN md.param_code = 'coliformes_fecales' THEN md.valor END) AS coliformes_fecales,
     max(CASE WHEN md.param_code = 'coliformes_totales' THEN md.valor END) AS coliformes_totales,
     max(CASE WHEN md.param_code = 'nitratos' THEN md.valor END) AS nitratos,
@@ -726,22 +960,12 @@ SELECT
     max(CASE WHEN md.param_code = 'mercurio' THEN md.valor END) AS mercurio,
     max(CASE WHEN md.param_code = 'manganeso' THEN md.valor END) AS manganeso,
     max(CASE WHEN md.param_code = 'cobre' THEN md.valor END) AS cobre,
-    max(CASE WHEN md.param_code = 'cromo_total' THEN md.valor END) AS cromo_total
+    max(CASE WHEN md.param_code = 'cromo_total' THEN md.valor END) AS cromo_total,
+    ec.contaminacion_observada
 FROM muestreos m
-JOIN pozos p ON p.pozo_id = m.pozo_id
 LEFT JOIN mediciones md ON md.muestreo_id = m.muestreo_id
+LEFT JOIN evaluaciones_contaminacion ec ON ec.muestreo_id = m.muestreo_id
 GROUP BY
     m.muestreo_id,
-    m.fuente,
-    m.fecha_muestreo,
-    m.anio,
-    p.pozo_id,
-    p.pozo_code,
-    p.fuente_codigo,
-    p.distrito,
-    p.localidad,
-    p.x,
-    p.y,
-    p.elevacion_m,
-    p.profundidad_m;
+    ec.contaminacion_observada;
 

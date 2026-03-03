@@ -50,9 +50,10 @@ node p2018.js
 ## Vistas útiles
 
 - `vw_muestreo_mediciones_estandar`: vista normalizada muestreo x medición.
-- `vw_muestreos_parametros_wide`: vista pivoteada (1 fila por muestreo, parámetros como columnas).
+- `vw_muestreos_parametros_wide`: dataset para red neuronal (solo parametros de agua como entrada + `contaminacion_observada` como salida).
 
 ## Contexto académico
 
 Este repositorio corresponde a la etapa de integración y normalización de datos del trabajo final de grado.  
 Los datos cargados serán base para desarrollar modelos y reglas de un sistema de alerta temprana de contaminación.
+

@@ -24,6 +24,7 @@ const META_COLS = new Set([
   "Y-UTM",
   "Localidad",
   "Prof_M",
+  "CONTAMINACION",
 ]);
 
 function toNum(v) {
@@ -96,6 +97,15 @@ function parseCellValue(v) {
   return { valor: null, valor_texto: s };
 }
 
+function parseContaminacion(v) {
+  if (v === null || v === undefined) return null;
+  const normalized = String(v).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "SI") return true;
+  if (normalized === "NO") return false;
+  return null;
+}
+
 function resolveFile() {
   const p1 = path.resolve("data", "GA_calidad_2001.xlsx");
   const p2 = path.resolve("data", "GA_calidad_2001_.xlsx");
@@ -115,9 +125,6 @@ export async function run() {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
 
   console.log("Filas:", rows.length);
-
-  console.log(rows)
-  
 
   const aliasMap = await cargarParamAliasMap({ fuente: FUENTE });
 
@@ -152,6 +159,26 @@ export async function run() {
           },
           client
         );
+
+        // ---------- EVALUACION CONTAMINACION ----------
+        const alerta = parseContaminacion(r["CONTAMINACION"]);
+        if (alerta !== null) {
+          await client.query(
+            `
+            INSERT INTO evaluaciones_contaminacion (
+              muestreo_id,
+              contaminacion_observada,
+              version_reglas
+            )
+            VALUES ($1, $2, $3)
+            ON CONFLICT (muestreo_id) DO UPDATE
+            SET
+              contaminacion_observada = EXCLUDED.contaminacion_observada,
+              version_reglas = EXCLUDED.version_reglas
+            `,
+            [muestreo.muestreo_id, alerta, "excel_2001_contaminacion_si_no_v1"]
+          );
+        }
 
         // ---------- MEDICIONES ----------
         for (const [col, val] of Object.entries(r)) {
